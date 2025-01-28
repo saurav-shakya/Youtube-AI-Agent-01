@@ -1,4 +1,4 @@
-# 🎥 Video Analysis AI with Gemini 2.0 Flash
+# 🎥 Youtube Video AI AGENT
 
 A powerful video analysis tool that uses Google's Gemini 2.0 Flash model to provide detailed insights and analysis of YouTube videos.
 
