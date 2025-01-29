@@ -19,6 +19,36 @@ from phi.model.google import Gemini
 from phi.tools.duckduckgo import DuckDuckGo
 from google.generativeai import upload_file, get_file
 import time
+from streamlit.runtime.scriptrunner import get_script_run_ctx
+from streamlit.runtime.state import SessionState
+import threading
+
+# Add thread-local storage
+thread_local = threading.local()
+
+def get_session():
+    """Get the current Streamlit session context"""
+    ctx = get_script_run_ctx()
+    if ctx is None:
+        # Return a dummy session when running outside Streamlit
+        return type('DummySession', (), {'session_state': {}})()
+    return ctx.session_state
+
+def safe_streamlit_call(func):
+    """Decorator to ensure Streamlit calls are made in the correct context"""
+    def wrapper(*args, **kwargs):
+        if get_script_run_ctx() is not None:
+            return func(*args, **kwargs)
+        return None
+    return wrapper
+
+@safe_streamlit_call
+def update_progress(progress_bar, status_text, progress, message):
+    """Thread-safe progress updates"""
+    if progress_bar is not None:
+        progress_bar.progress(progress)
+    if status_text is not None:
+        status_text.write(message)
 
 load_dotenv()
 
@@ -46,67 +76,66 @@ if 'frames' not in st.session_state:
     st.session_state.frames = []
 if 'current_url' not in st.session_state:
     st.session_state.current_url = None
+if 'uploaded_file_resource' not in st.session_state:
+    st.session_state.uploaded_file_resource = None
 
 # Custom UI Theme
+st.set_page_config(
+    page_title="Youtube Video AI Agent",
+    page_icon="🎥",
+    layout="wide",
+    initial_sidebar_state="collapsed"
+)
+
 st.markdown("""
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
     
-    :root {
-        --primary: #3B82F6;
-        --secondary: #8B5CF6;
-        --background: #0F172A;
-    }
-    
-    body {
-        background: linear-gradient(135deg, var(--background), #1E1B4B);
-        color: white;
+    .main {
+        background: linear-gradient(135deg, #0f1729, #1e1b4b, #0f1729);
+        min-height: 100vh;
         font-family: 'Inter', sans-serif;
     }
     
-    .header {
-        background: rgba(255, 255, 255, 0.05);
-        border-radius: 20px;
+    .header-container {
+        display: flex;
+        align-items: center;
+        gap: 2rem;
+        padding: 1.5rem;
+        background: rgba(255, 255, 255, 0.03);
+        backdrop-filter: blur(12px);
+        border: 1px solid rgba(255, 255, 255, 0.05);
+        border-radius: 24px;
+        margin-bottom: 2rem;
+    }
+    
+    .neo-container {
+        background: rgba(255, 255, 255, 0.02);
+        backdrop-filter: blur(16px);
+        border: 1px solid rgba(255, 255, 255, 0.05);
+        border-radius: 24px;
         padding: 2rem;
         margin-bottom: 2rem;
-        border: 1px solid rgba(255, 255, 255, 0.1);
+        transition: transform 0.3s ease;
     }
     
     .chat-message {
-        padding: 1.5rem;
-        border-radius: 15px;
-        margin-bottom: 1rem;
-        max-width: 85%;
-        line-height: 1.6;
-    }
-
-    .user-message {
         background: rgba(59, 130, 246, 0.1);
-        border: 1px solid rgba(59, 130, 246, 0.3);
-        margin-left: auto;
-    }
-
-    .assistant-message {
-        background: rgba(139, 92, 246, 0.1);
-        border: 1px solid rgba(139, 92, 246, 0.3);
-        margin-right: auto;
-    }
-
-    .video-info {
-        background: rgba(30, 41, 59, 0.7);
-        border-radius: 15px;
+        border-left: 4px solid #3b82f6;
         padding: 1.5rem;
+        border-radius: 12px;
         margin: 1rem 0;
-        border: 1px solid rgba(59, 130, 246, 0.3);
-    }
-
-    .metadata-section {
-        background: rgba(30, 41, 59, 0.4);
-        border-radius: 10px;
-        padding: 1rem;
-        margin-top: 1rem;
     }
     </style>
+""", unsafe_allow_html=True)
+
+st.markdown("""
+    <div class="header-container">
+        <h1 style="color: white; margin: 0;">🎥 Youtube Video AI Agent</h1>
+        <span style="background: rgba(59,130,246,0.1); color: #3b82f6; padding: 0.2rem 0.8rem; border-radius: 12px; font-size: 0.9rem;">
+            Powered by Gemini 2.0 Flash
+        </span>
+    </div>
 """, unsafe_allow_html=True)
 
 def format_duration(duration_str):
@@ -115,7 +144,7 @@ def format_duration(duration_str):
     hours = duration.total_seconds() // 3600
     minutes = (duration.total_seconds() % 3600) // 60
     seconds = duration.total_seconds() % 60
-    
+
     if hours > 0:
         return f"{int(hours)}h {int(minutes)}m {int(seconds)}s"
     else:
@@ -142,23 +171,23 @@ def get_video_details(video_id):
             part='snippet,contentDetails,statistics',
             id=video_id
         ).execute()
-        
+
         if not response['items']:
             return None
-        
+
         item = response['items'][0]
-    
+
         # Get channel details
         channel_response = youtube.channels().list(
             part='snippet,statistics',
             id=item['snippet']['channelId']
         ).execute()
-        
+
         channel_info = channel_response['items'][0] if channel_response['items'] else None
-        
+
         # Format the data
         published_at = datetime.strptime(item['snippet']['publishedAt'], '%Y-%m-%dT%H:%M:%SZ')
-        
+
         return {
             'title': item['snippet']['title'],
             'description': item['snippet']['description'],
@@ -187,7 +216,7 @@ def get_video_comments(video_id, max_comments=50):
             order="relevance"
         )
         response = request.execute()
-        
+
         for item in response['items']:
             comment = item['snippet']['topLevelComment']['snippet']
             comments.append({
@@ -196,7 +225,7 @@ def get_video_comments(video_id, max_comments=50):
                 'likes': format_number(comment['likeCount']),
                 'published': datetime.strptime(comment['publishedAt'], '%Y-%m-%dT%H:%M:%SZ').strftime('%B %d, %Y')
             })
-        
+
         return comments
     except Exception as e:
         return None
@@ -208,16 +237,16 @@ def get_video_transcript(video_id):
             part='snippet',
             videoId=video_id
         ).execute()
-        
+
         if not transcripts.get('items'):
             return None
-            
+
         caption_id = transcripts['items'][0]['id']
         transcript = youtube.captions().download(
             id=caption_id,
             tfmt='srt'
         ).execute()
-        
+
         return transcript
     except Exception as e:
         return None
@@ -271,9 +300,10 @@ def download_youtube_video(url):
             progress_bar = st.progress(0)
             status_text = st.empty()
 
+            @safe_streamlit_call
             def progress_hook(d):
-                if d['status'] == 'downloading':
-                    try:
+                try:
+                    if d['status'] == 'downloading':
                         total = d.get('total_bytes', 0) or d.get('total_bytes_estimate', 0)
                         downloaded = d.get('downloaded_bytes', 0)
                         if total:
@@ -281,18 +311,30 @@ def download_youtube_video(url):
                             if total > 2000 * 1024 * 1024:  # 2GB in bytes
                                 raise Exception("Video file size exceeds 2GB limit")
                             percentage = (downloaded / total) * 100
-                            progress_bar.progress(int(percentage))
-                            status_text.write(f"⬇️ Downloaded: {downloaded//(1024*1024)}MB / {total//(1024*1024)}MB")
-                    except Exception as e:
-                        if "exceeds 2GB limit" in str(e):
-                            raise e
-                        pass
-                elif d['status'] == 'finished':
-                    status_text.write("✅ Download complete! Processing video...")
+                            update_progress(
+                                progress_bar,
+                                status_text,
+                                int(percentage),
+                                f"⬇️ Downloaded: {downloaded//(1024*1024)}MB / {total//(1024*1024)}MB"
+                            )
+                    elif d['status'] == 'finished':
+                        update_progress(progress_bar, status_text, 100, "✅ Download complete! Processing video...")
+                except Exception as e:
+                    if "exceeds 2GB limit" in str(e):
+                        raise e
+                    if get_script_run_ctx() is not None:
+                        st.error(f"Download error: {str(e)}")
 
             # Download video
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 try:
+                    info = ydl.extract_info(url, download=False)
+                    # Check file size before downloading
+                    filesize = info.get('filesize', 0) or info.get('filesize_approx', 0)
+                    if filesize > 2000 * 1024 * 1024:  # 2GB in bytes
+                        raise Exception("Video file size exceeds 2GB limit. Please try a lower quality version.")
+                    
+                    # Proceed with download if size is acceptable
                     ydl.download([url])
                 except Exception as e:
                     raise Exception(f"Download failed: {str(e)}")
@@ -303,8 +345,8 @@ def download_youtube_video(url):
                 if file_size > 2000 * 1024 * 1024:  # 2GB in bytes
                     os.remove(video_path)
                     raise Exception("Video file size exceeds 2GB limit")
-                file_size_mb = file_size / (1024 * 1024)
-                st.success(f"✅ Video uploaded successfully! ({file_size_mb:.1f} MB)")
+                file_size_gb = file_size / (1024 * 1024 * 1024)
+                st.success(f"✅ Video uploaded successfully! ({file_size_gb:.2f} GB)")
                 return video_path
             else:
                 raise Exception("Video file not found after download")
@@ -312,104 +354,116 @@ def download_youtube_video(url):
     except Exception as e:
         st.error(f"❌ Download Error: {str(e)}")
         st.info("""💡 Tips:
-        1. Video size must be less than 2GB
+        1. Video must be less than 2GB
         2. Try selecting a lower quality version
-        3. Check your internet connection
-        4. Try a different video URL
-        5. Try again after some time""")
+        3. For long videos, try shorter clips
+        4. Check your internet connection
+        5. Try a different video URL""")
         return None
 
+def wait_for_file_activation(uploaded_file_resource):
+    """Polls the Gemini API until the file is in an ACTIVE state."""
+    max_retries = 10
+    retry_delay = 1  # seconds
+    for i in range(max_retries):
+        try:
+            file_status = get_file(uploaded_file_resource.name) # use st.session_state here
+            if file_status and file_status.state == 'ACTIVE':
+                return
+            else:
+               st.warning(f"File not active, waiting... (attempt {i+1}/{max_retries})")
+               time.sleep(retry_delay)
+        except Exception as e:
+            error_message = str(e)
+            st.error(f"❌ Error checking file status: {error_message}")
+            raise e  # Re-raise the exception to be handled by the caller
+
+    raise Exception(f"File did not become ACTIVE after {max_retries} attempts.")
+
 def analyze_video_content(video_path, user_query):
-    """Analyze video content using Gemini 2.0 Flash for direct video understanding"""
+    """Analyzes video content using Gemini 2.0 Flash"""
     try:
-        # First check video length
+        # Basic validation
+        if not os.path.exists(video_path):
+            raise Exception("Video file not found")
+        
+        # Check video length silently
         cap = cv2.VideoCapture(video_path)
         fps = cap.get(cv2.CAP_PROP_FPS)
         total_frames = cap.get(cv2.CAP_PROP_FRAME_COUNT)
         duration_minutes = (total_frames / fps) / 60
         cap.release()
 
-        # Validate video length
-        if duration_minutes > 50:  # 50 minutes max for Gemini 2.0 Flash
+        if duration_minutes > 50:
             raise Exception("Video is too long. Maximum duration is 50 minutes.")
 
-        with st.spinner("🎥 Analyzing video..."):
-            # Read video file in binary mode
-            with open(video_path, 'rb') as f:
-                video_data = f.read()
+        with st.spinner("🎥 Analyzing video content..."):
+            # Upload file
+            video_file = upload_file(video_path)
             
-            # Create content with video and prompt
+            # Wait for file activation silently
+            for _ in range(15):  # Increased retries
+                try:
+                    file_status = get_file(video_file.name)
+                    if file_status and file_status.state == "ACTIVE":
+                        break
+                    time.sleep(2)
+                except:
+                    time.sleep(2)
+                    continue
+
+            # Initialize model with higher tokens
+            model = genai.GenerativeModel('gemini-2.0-flash-exp', 
+                generation_config={
+                    'temperature': 0.4,
+                    'top_p': 0.8,
+                    'top_k': 40,
+                    'max_output_tokens': 4096,
+                    'candidate_count': 1
+                }
+            )
+
+            # Create content
             content = {
                 "contents": [{
                     "parts": [
-                        {
-                            "inline_data": {
-                                "mime_type": "video/mp4",
-                                "data": base64.b64encode(video_data).decode('utf-8')
-                            }
-                        },
-                        {
-                            "text": f"""
-                            Please provide a detailed analysis of the video.
-                            
-                            User's question: {user_query}
-                            
-                            Focus on these points:
-                            1. Main topic/subject of the video
-                            2. What's happening (actions, events, conversations)
-                            3. People/characters in the video
-                            4. Setting and environment
-                            5. Important visual and audio elements
-                            6. Video style and quality
-                            7. Key moments and highlights
-                            
-                            Guidelines:
-                            - Provide accurate and detailed analysis
-                            - Explain in a natural conversational style
-                            - Focus on information relevant to user's question
-                            - Mention if anything is unclear
-                            """
-                        }
+                        {"text": f"""Please analyze this video and answer: {user_query}
+
+                        Provide a detailed analysis covering:
+                        1. Main answer to the question
+                        2. Important visual elements and scenes
+                        3. Key audio/speech content
+                        4. Relevant details and context
+                        """},
+                        video_file
                     ]
                 }]
             }
-            
-            # Initialize Gemini 2.0 Flash model
-            model = genai.GenerativeModel('gemini-2.0-flash-exp', generation_config={
-                'temperature': 0.4,
-                'top_p': 0.8,
-                'top_k': 40,
-                'max_output_tokens': 2048
-            })
-            
-            # Generate analysis with retries
-            with st.spinner("🤖 Generating analysis..."):
-                max_retries = 3
-                retry_count = 0
-                
-                while retry_count < max_retries:
-                    try:
-                        response = model.generate_content(**content)
-                        if response and response.text:
-                            return response.text
-                        break
-                    except Exception as e:
-                        if "RATE_LIMIT_EXCEEDED" in str(e) and retry_count < max_retries - 1:
-                            retry_count += 1
-                            time.sleep(5)  # Wait 5 seconds before retrying
-                            continue
+
+            # Generate with retries
+            for attempt in range(3):
+                try:
+                    response = model.generate_content(**content)
+                    if response and response.text:
+                        return response.text
+                    time.sleep(2)
+                except Exception as e:
+                    if "RATE_LIMIT_EXCEEDED" in str(e):
+                        time.sleep(5)
+                    elif attempt == 2:  # Last attempt
                         raise e
-                
-                return "❌ Failed to generate video analysis. Please try again."
+                    continue
+
+            return None
 
     except Exception as e:
-        st.error(f"❌ Analysis Error: {str(e)}")
-        st.info("""💡 Tips:
-        1. Video size should be less than 2000MB (2GB)
-        2. Video length should be less than 50 minutes (with audio)
-        3. Video format should be MP4, MOV, WebM or 3GPP
-        4. Check your internet connection
-        5. Try again after some time""")
+        st.error(f"❌ Analysis failed: {str(e)}")
+        st.info("""
+        💡 Try:
+        1. Refresh and try again
+        2. Check internet connection
+        3. Try a different video
+        """)
         return None
 
 def extract_video_id(url):
@@ -419,7 +473,7 @@ def extract_video_id(url):
         r'(?:youtu\.be\/)([0-9A-Za-z_-]{11})',
         r'(?:embed\/)([0-9A-Za-z_-]{11})'
     ]
-    
+
     for pattern in patterns:
         match = re.search(pattern, url)
         if match:
@@ -438,21 +492,23 @@ if yt_url:
         # Cleanup old video if exists
         if st.session_state.video_path and os.path.exists(st.session_state.video_path):
             os.remove(st.session_state.video_path)
-        
+
         # Download new video
         video_path = download_youtube_video(yt_url)
         if video_path:
             st.session_state.video_path = video_path
             st.session_state.current_url = yt_url
-    
+            st.session_state.uploaded_file_resource = None
+
+
     # Use stored video path
     if st.session_state.video_path and os.path.exists(st.session_state.video_path):
         # Show video player
         st.video(st.session_state.video_path)
-        
+
         # Chat interface
         st.markdown("### 💬 Ask AI About This Video")
-        
+
         # Suggested prompts
         st.markdown("""
             **Suggested Questions:**
@@ -462,28 +518,32 @@ if yt_url:
             - What is the setting/location of the video?
             - What are the key visual elements or scenes?
         """)
-        
+
         # Chat input
         user_query = st.text_area("Your question about the video:", height=100)
-        
+
         if st.button("🚀 Analyze", use_container_width=True):
             if user_query:
                 # Analyze video
                 analysis = analyze_video_content(st.session_state.video_path, user_query)
                 if analysis:
-                    st.markdown(f"""
-                        <div class='chat-message assistant-message'>
-                            {analysis}
+                    st.markdown("""
+                        <div class="neo-container">
+                            <h3 style="color: #3b82f6; margin-bottom: 1rem;">💡 Analysis Results</h3>
+                            <div class="chat-message">
+                                {}
+                            </div>
                         </div>
-                    """, unsafe_allow_html=True)
-        
+                    """.format(analysis), unsafe_allow_html=True)
+
         # New video button
         if st.button("📺 Analyze Another Video"):
-            # Cleanup
+             # Cleanup
             if st.session_state.video_path and os.path.exists(st.session_state.video_path):
                 os.remove(st.session_state.video_path)
             st.session_state.video_path = None
             st.session_state.current_url = None
+            st.session_state.uploaded_file_resource = None
             st.rerun()
     else:
         st.error("❌ Video file not found! Please try downloading again.")
