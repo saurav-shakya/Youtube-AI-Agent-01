@@ -1,6 +1,59 @@
-# 🎥 Youtube Video AI AGENT
+# YouTube Video AI Agent 🎥
 
-A powerful video analysis tool that uses Google's Gemini 2.0 Flash model to provide detailed insights and analysis of YouTube videos.
+An AI-powered YouTube video analysis tool built with Streamlit and Gemini AI.
+
+## Features
+- Video analysis and insights
+- Comment analysis
+- Transcript processing
+- Frame-by-frame analysis
+- AI-powered Q&A about video content
+
+## Setup Instructions
+
+1. Clone the repository:
+```bash
+git clone <your-repo-url>
+cd <repo-name>
+```
+
+2. Install dependencies:
+```bash
+pip install -r requirements.txt
+```
+
+3. Set up environment variables:
+Create a `.env` file with:
+```
+YOUTUBE_API_KEY=your_youtube_api_key
+GOOGLE_API_KEY=your_google_api_key
+```
+
+4. Run the app:
+```bash
+streamlit run app.py
+```
+
+## Deployment
+This app can be deployed on:
+- Streamlit Cloud (Recommended)
+- Railway.app
+- Render.com
+
+Make sure to set the environment variables in your deployment platform's settings.
+
+## Environment Variables Required
+- `YOUTUBE_API_KEY`: Your YouTube Data API key
+- `GOOGLE_API_KEY`: Your Google API key for Gemini AI
+
+## Tech Stack
+- Python 3.10+
+- Streamlit
+- Google Gemini AI
+- YouTube Data API
+- OpenCV
+- NumPy
+- Pillow
 
 ## ✨ Features
 

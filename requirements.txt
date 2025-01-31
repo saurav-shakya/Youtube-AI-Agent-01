@@ -9,3 +9,6 @@ Pillow>=10.0.0
 yt-dlp>=2023.11.16
 isodate>=0.6.1
 google-api-python-client>=2.100.0
+Flask==3.0.2
+python-dotenv==1.0.1
+gunicorn==21.2.0

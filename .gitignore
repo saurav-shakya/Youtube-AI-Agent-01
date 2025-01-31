@@ -19,4 +19,11 @@ ENV/
 
 # OS specific files
 .DS_Store
-Thumbs.db 
+Thumbs.db
+
+# Additional entries
+.streamlit/secrets.toml
+*.mp4
+*.avi
+*.mov
+temp/ 
