@@ -15,8 +15,8 @@ An AI-powered YouTube video analysis
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/Video-Summarizer-AI-Agent.git
-cd Video-Summarizer-AI-Agent
+git clone https://github.com/yourusername/Youtube-AI-Agent-01.git
+cd Youtube-AI-Agent-01
 ```
 
 2. Install required packages:
